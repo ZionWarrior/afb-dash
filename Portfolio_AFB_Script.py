@@ -804,6 +804,7 @@ const chart = new Chart(ctx, {{
   plugins: [eventMarkerPlugin, athPlugin],
   options: {{
     responsive: true, maintainAspectRatio: false,
+    layout: {{ padding: {{ left: 8, top: 14, right: 12 }} }},
     animation: {{ duration: 500, easing: "easeOutCubic" }},
     interaction: {{ mode: "index", intersect: false }},
     plugins: {{
