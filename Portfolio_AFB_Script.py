@@ -53,6 +53,49 @@ POSITIONS = [
             ("2026-07-07", 17, 2.76, 0.48),
         ],
     },
+    {
+        # Physische Muenze: kein eigener Boersenticker. Bewertung ueber
+        # Gold-Spot (COMEX GC=F, in EUR umgerechnet) mal Aufgeld-Faktor.
+        # Faktor kalibriert auf gold.de-Haendlerpreis 3.715 EUR bei
+        # Spot ~3.565 EUR/oz (Juli 2026). Bei Bedarf anpassen:
+        # price_factor = aktueller Haendlerpreis / aktueller Spot in EUR
+        "name": "Krügerrand 1 oz (1979)",
+        "ticker": "GOLD_EUR",
+        "currency": "EUR",
+        "price_factor": 3715.0 / 3565.0,
+        "trades": [("2025-12-29", 1, 3858.00, 0.00)],
+    },
+    {
+        # Anleihe ohne Yahoo-Ticker: Kurs wird MANUELL gepflegt.
+        # "manual_price_pct": aktueller Kurs in Prozent des Nennwerts -
+        # gelegentlich aktualisieren (z.B. Boerse Stuttgart/Frankfurt).
+        # Startwert = Kaufkurs; bitte durch aktuellen Kurs ersetzen.
+        # "coupons_received": erhaltene Zinsen NETTO, zaehlen zur G&V.
+        # Kostenbasis 4.500,99 EUR = Kurswert 4.294,34 + Stueckzinsen 205,66.
+        # Kommende Coupons (je 223,41 brutto): 18.09.26, 20.09.27, 18.09.28.
+        "name": "Rumänien 5,5 % 2028",
+        "symbol": "RO28",
+        "ticker": "MANUAL",
+        "currency": "EUR",
+        "nominal": 4061.99,
+        "manual_price_pct": 105.72,
+        "coupons_received": [("2025-09-19", 164.49)],
+        "trades": [("2025-08-18", 1, 4500.99, 0.00)],
+    },
+    {
+        # Sparbrief: kein Marktkurs, Wert konstant zum Nennwert.
+        # Fester Zins 2,1 % p.a., Laufzeit bis 19.08.2027.
+        # Zinszahlung jeweils zum Jahresende (NETTO eintragen),
+        # Rest bei Faelligkeit 19.08.2027. Naechste Zahlung: 31.12.2026.
+        "name": "VW Bank Sparbrief 2,1 %",
+        "symbol": "VWFS",
+        "ticker": "MANUAL",
+        "currency": "EUR",
+        "nominal": 4000.00,
+        "manual_price_pct": 100.0,
+        "coupons_received": [("2025-12-31", 22.51)],
+        "trades": [("2025-08-19", 1, 4000.00, 0.00)],
+    },
     # ------- freie Slots fuer kommende Investments -------
     # {
     #     "name": "",
@@ -93,7 +136,7 @@ EVENTS = [
     {"date": "2026-07-01", "label": "Iran: Waffenruhe bricht"},
 ]
 
-FREE_SLOTS = 3          # Ghost-Zeilen in der Tabelle fuer kuenftige Positionen
+FREE_SLOTS = 0          # Ghost-Zeilen in der Tabelle fuer kuenftige Positionen
 OUTPUT = "Portfolio_AFB.html"
 
 # ============================================================================
@@ -163,13 +206,23 @@ def build_data():
     )
     start = (first_trade - pd.Timedelta(days=7)).strftime("%Y-%m-%d")
 
-    tickers = [p["ticker"] for p in POSITIONS]
+    # Abgeleitete Ticker: nicht direkt handelbar, werden aus einer Quelle berechnet
+    DERIVED_TICKERS = {"GOLD_EUR": "GC=F"}  # Gold-Spot in EUR je Unze
+
+    tickers = [
+        DERIVED_TICKERS.get(p["ticker"], p["ticker"])
+        for p in POSITIONS if p["ticker"] != "MANUAL"
+    ]
     bench_tickers = [b["ticker"] for b in BENCHMARKS]
     fx_tickers = ["EURUSD=X", "EURGBP=X"]
     close = fetch_history(sorted(set(tickers + bench_tickers + fx_tickers)), start)
 
     eurusd = close["EURUSD=X"]
     eurgbp = close["EURGBP=X"]
+
+    # Abgeleitete Serien berechnen (GC=F ist USD je Unze -> EUR je Unze)
+    if any(p["ticker"] == "GOLD_EUR" for p in POSITIONS):
+        close["GOLD_EUR"] = close["GC=F"] / eurusd
 
     chart_start = pd.Timestamp(first_trade)
     dates = close.loc[chart_start:].index
@@ -180,10 +233,17 @@ def build_data():
     total_invested_eur = pd.Series(0.0, index=dates)
     lumpsum_eur = pd.Series(0.0, index=dates)
     position_series = {}  # Name -> Lump-Sum-Serie (EUR) je Einzelposition
+    coupons_eur_total = 0.0  # erhaltene Netto-Zinsen (fliessen in die G&V)
     rows = []
 
     for p in POSITIONS:
-        px = close[p["ticker"]]
+        if p["ticker"] == "MANUAL":
+            # Manuell gepflegter Kurs (z.B. Anleihe): konstante Serie
+            px = pd.Series(
+                p["nominal"] * p["manual_price_pct"] / 100.0, index=close.index
+            )
+        else:
+            px = close[p["ticker"]] * p.get("price_factor", 1.0)
         fx = to_eur_factor(p["currency"], eurusd, eurgbp)
         fx_ser = fx if hasattr(fx, "index") else pd.Series(fx, index=close.index)
 
@@ -218,9 +278,12 @@ def build_data():
         val_nat = q_now * last
         val_eur = val_nat * fx_now
         cost_eur = float(cost_eur_ser.iloc[-1])
+        coupons_nat = sum(a for _, a in p.get("coupons_received", []))
+        coupons_eur = coupons_nat * fx_now
+        coupons_eur_total += coupons_eur
         rows.append({
             "name": p["name"],
-            "ticker": p["ticker"].replace("-USD", ""),
+            "ticker": p.get("symbol") or {"GOLD_EUR": "GOLD"}.get(p["ticker"], p["ticker"].replace("-USD", "")),
             "currency": "EUR" if p["currency"] == "EUR" else p["currency"],
             "qty": q_now,
             "avg_entry": avg_entry,
@@ -231,8 +294,8 @@ def build_data():
             "value_eur": val_eur,
             "cost_nat": cost_nat,
             "cost_eur": cost_eur,
-            "pnl_eur": val_eur - cost_eur,
-            "pnl_pct": (val_nat / cost_nat - 1) * 100,
+            "pnl_eur": val_eur + coupons_eur - cost_eur,
+            "pnl_pct": ((val_nat + coupons_nat) / cost_nat - 1) * 100,
         })
 
     # --- Chart-Portfolio: Lump-Sum-Kurve (glatt, keine Kapitalzufluss-Spruenge) ---
@@ -262,8 +325,8 @@ def build_data():
     summary = {
         "total_eur": tv,
         "invested_eur": ti,
-        "pnl_eur": tv - ti,
-        "pnl_pct": (tv / ti - 1) * 100,
+        "pnl_eur": tv + coupons_eur_total - ti,
+        "pnl_pct": ((tv + coupons_eur_total) / ti - 1) * 100,
         "day_eur": tv - tv_prev,
         "day_pct": (tv / tv_prev - 1) * 100,
         "eurusd": float(eurusd.dropna().iloc[-1]),
@@ -554,7 +617,7 @@ def build_html(summary, rows, chart):
     <div class="kpi">
       <div class="label">Positionen</div>
       <div class="value">{len(rows)}</div>
-      <div class="sub">{FREE_SLOTS} Slots frei</div>
+      <div class="sub">{FREE_SLOTS} {'Slot' if FREE_SLOTS == 1 else 'Slots'} frei</div>
     </div>
     <div class="kpi">
       <div class="label">Stand</div>
@@ -936,15 +999,17 @@ def main():
     except Exception as e:
         print(f"\nFEHLER beim Kursabruf: {e}")
         print("Internetverbindung pruefen bzw. spaeter erneut versuchen.")
-        input("Enter zum Schliessen...")
         sys.exit(1)
 
     out = Path(__file__).resolve().parent / OUTPUT
     out.write_text(build_html(summary, rows, chart), encoding="utf-8")
     print(f"OK - {out} aktualisiert ({summary['updated']})")
 
-    import webbrowser
-    webbrowser.open(out.as_uri())
+    # Browser nur lokal oeffnen, nicht im GitHub-Actions-Lauf
+    import os
+    if not os.environ.get("GITHUB_ACTIONS"):
+        import webbrowser
+        webbrowser.open(out.as_uri())
 
 
 if __name__ == "__main__":
