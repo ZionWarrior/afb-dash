@@ -312,6 +312,7 @@ def build_data():
             "value_eur": val_eur,
             "cost_nat": cost_nat,
             "cost_eur": cost_eur,
+            "coupons_eur": coupons_eur,
             "pnl_eur": val_eur + coupons_eur - cost_eur,
             "pnl_pct": ((val_nat + coupons_nat) / cost_nat - 1) * 100,
         })
@@ -481,6 +482,21 @@ def build_static_svg(chart):
 
 
 def build_html(summary, rows, chart):
+    calc_rows = ""
+    calc_coupons_total = 0.0
+    for r in rows:
+        cp = r.get("coupons_eur", 0.0)
+        calc_coupons_total += cp
+        cp_cell = f"+&thinsp;{fmt(cp)}" if cp else '<span class="muted-dash">&mdash;</span>'
+        calc_rows += f"""
+          <tr>
+            <td>{r['name']}</td>
+            <td class="num">{fmt(r['value_eur'])}</td>
+            <td class="num">&minus;&thinsp;{fmt(r['cost_eur'])}</td>
+            <td class="num">{cp_cell}</td>
+            <td class="num {sign_cls(r['pnl_eur'])}">{sign_fmt(r['pnl_eur'], 2)}</td>
+          </tr>"""
+
     pos_rows = ""
     for r in rows:
         sym = cur_sym(r["currency"])
@@ -621,6 +637,16 @@ def build_html(summary, rows, chart):
   tr.ghost .pos-name {{ font-weight: 400; font-style: italic; }}
 
   footer {{ margin-top: 40px; color: var(--muted); font-size: 12px; line-height: 1.7; }}
+  .calc-panel {{ border: 1px solid var(--line); background: var(--panel); padding: 16px 18px 14px; }}
+  .calc-title {{ color: var(--text); font-size: 13px; margin-bottom: 10px; }}
+  .calc-table {{ border-collapse: collapse; min-width: 0; width: auto; }}
+  .calc-table th {{ padding: 6px 14px; font-size: 10px; background: transparent; }}
+  .calc-table td {{ padding: 6px 14px; font-size: 12px; border-bottom: 1px solid #17181b; }}
+  .calc-table td.num {{ text-align: right; font-family: "IBM Plex Mono", monospace;
+                        font-variant-numeric: tabular-nums; }}
+  .calc-table tr.calc-sum td {{ border-top: 1px solid var(--line); border-bottom: none;
+                                color: var(--text); font-weight: 500; }}
+  .calc-note {{ margin-top: 10px; max-width: 900px; }}
 
   @media (max-width: 760px) {{
     .kpis {{ grid-template-columns: repeat(2, 1fr); }}
@@ -700,9 +726,34 @@ def build_html(summary, rows, chart):
   </section>
 
   <footer>
-    Kursdaten: Yahoo Finance (verz&ouml;gert). Einstiege und G&amp;V inklusive Ordergeb&uuml;hren.
-    USD-Positionen zum jeweiligen Tageskurs in EUR umgerechnet.
-    Aktualisierung: Doppelklick auf die Start-Verkn&uuml;pfung.
+    <div class="calc-panel">
+      <div class="calc-title">So errechnet sich die Gesamt-G&amp;V von {sign_fmt(s['pnl_eur'], 2, '&thinsp;€')}</div>
+      <table class="calc-table">
+        <thead>
+          <tr><th>Position</th><th>Wert heute &euro;</th><th>&minus; Kostenbasis &euro;</th><th>+ Zinsen netto &euro;</th><th>= G&amp;V &euro;</th></tr>
+        </thead>
+        <tbody>{calc_rows}
+          <tr class="calc-sum">
+            <td>Summe</td>
+            <td class="num">{fmt(s['total_eur'])}</td>
+            <td class="num">&minus;&thinsp;{fmt(s['invested_eur'])}</td>
+            <td class="num">+&thinsp;{fmt(calc_coupons_total)}</td>
+            <td class="num {sign_cls(s['pnl_eur'])}">{sign_fmt(s['pnl_eur'], 2)}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="calc-note">
+        Kostenbasis = Kurswert + Ordergeb&uuml;hren (Anleihe inkl. gezahlter St&uuml;ckzinsen);
+        USD-K&auml;ufe zum Wechselkurs des Kauftags in Euro umgerechnet.
+        Wert heute = aktueller Kurs &times; Menge, USD-Positionen zum heutigen Wechselkurs
+        &ndash; W&auml;hrungseffekte sind damit Teil der G&amp;V.
+        Zinsen = tats&auml;chlich erhaltene Netto-Coupons (nach Steuer); sie erh&ouml;hen die G&amp;V,
+        nicht aber den Positionswert.
+      </div>
+    </div>
+    <div style="margin-top:14px;">
+      Kursdaten: Yahoo Finance (verz&ouml;gert). Anleihe und Sparbrief manuell bepreist.
+    </div>
   </footer>
 
 </div>
