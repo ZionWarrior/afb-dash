@@ -357,9 +357,11 @@ def build_data():
     for p in POSITIONS:
         sym = p.get("symbol", p["name"])
         for d, a in p.get("coupons_received", []):
-            interest_events.append({"date": d, "label": f"+{fmt(a)}\u2009\u20ac {sym}"})
+            interest_events.append(
+                {"date": d, "label": f"+{fmt(a)}\u2009\u20ac {sym}", "position": p["name"]}
+            )
         for d, lbl in p.get("coupons_upcoming", []):
-            interest_events.append({"date": d, "label": lbl})
+            interest_events.append({"date": d, "label": lbl, "position": p["name"]})
     interest_events.sort(key=lambda e: e["date"])
 
     chart = {
@@ -374,6 +376,7 @@ def build_data():
             for name, s in position_series_nc.items()
         },
         "interest_events": interest_events,
+        "manual_positions": [p["name"] for p in POSITIONS if p["ticker"] == "MANUAL"],
         "benchmarks": bench_series,
         "benchmarks_raw": bench_raw,
         "benchmarks_raw_eur": bench_raw_eur,
@@ -749,10 +752,13 @@ for (const [name, series] of Object.entries(DATA.benchmarks)) {{
 const activePositions = new Set(Object.keys(DATA.positions));
 
 function recomputePortfolioLine() {{
+  // Zins-Stufen (Coupons in der Kurve) nur zeigen, wenn genau EINE Position
+  // ausgewaehlt ist - in der Gesamtansicht laeuft die Kurve ohne Zins-Spruenge.
+  const single = activePositions.size === 1;
   const n = DATA.dates.length;
   const sum = new Array(n).fill(0);
   activePositions.forEach(name => {{
-    const s = DATA.positions[name];
+    const s = single ? DATA.positions[name] : (DATA.positions_nc[name] || DATA.positions[name]);
     for (let i = 0; i < n; i++) sum[i] += (s[i] ?? 0);
   }});
   const portfolioDs = chart.data.datasets[0];
@@ -832,6 +838,10 @@ function athIndices(arr) {{
 }}
 
 function portfolioAthIndex() {{
+  // Kein ATH, wenn ausschliesslich manuell bepreiste Positionen
+  // (Anleihe/Sparbrief) angezeigt werden - dort ist ein ATH sinnlos.
+  const activeArr = Array.from(activePositions);
+  if (activeArr.every(n => (DATA.manual_positions || []).includes(n))) return [];
   // ATH auf Basis der Kurve OHNE Zins-Stufen (Zins-Zahlungen erzeugen kein ATH)
   const n = DATA.dates.length;
   const sum = new Array(n).fill(0);
@@ -881,7 +891,11 @@ const interestPlugin = {{
     if (!chartArea) return;
     const ds = chart.data.datasets[0]; // Portfolio-Linie
     if (ds.hidden) return;
+    // Nur zeigen, wenn genau die zugehoerige Position allein ausgewaehlt ist
+    if (activePositions.size !== 1) return;
+    const activeName = Array.from(activePositions)[0];
     (DATA.interest_events || []).forEach(ev => {{
+      if (ev.position !== activeName) return;
       const idx = DATA.dates.indexOf(ev.date);
       if (idx === -1) return; // Termin (noch) nicht im Chartzeitraum
       const v = ds.data[idx];
@@ -981,6 +995,7 @@ const chart = new Chart(ctx, {{
   }}
 }});
 
+recomputePortfolioLine();
 const r0 = yRange();
 chart.options.scales.y.min = r0.min;
 chart.options.scales.y.max = r0.max;
