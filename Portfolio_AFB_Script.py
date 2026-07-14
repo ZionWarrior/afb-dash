@@ -145,6 +145,26 @@ EVENTS = [
     {"date": "2026-07-01", "label": "Iran: Waffenruhe bricht"},
 ]
 
+# Zins-Historie (alle bisherigen Zahlungsstroeme der Zins-Positionen)
+ZINS_HISTORIE = [
+    ("18.08.2025", "RO28", "Stückzinsen an Vorbesitzer gezahlt",
+     "−205,66 € (Teil der Kostenbasis)"),
+    ("19.09.2025", "RO28", "Jahrescoupon",
+     "223,41 € brutto − 58,92 € Steuer = 164,49 € netto"),
+    ("31.12.2025", "VWFS", "Jahreszins 2025 (ab Kauf 19.08.)",
+     "30,57 € brutto − 7,64 € Steuer − 0,42 € Soli = 22,51 € netto"),
+]
+
+# Zins-Ausblick: (Datum, Position, Beschreibung, brutto, netto-Prognose)
+# Netto-Prognose: Abgeltungsteuer + Soli (26,375 %), ohne Freistellungsauftrag
+ZINS_AUSBLICK = [
+    ("18.09.2026", "RO28", "Jahrescoupon", 223.41, 164.49),
+    ("31.12.2026", "VWFS", "Jahreszins 2026 (volles Jahr)", 84.00, 61.84),
+    ("19.08.2027", "VWFS", "Schlusszins bei Fälligkeit (01.01.–19.08.)", 52.93, 38.97),
+    ("20.09.2027", "RO28", "Jahrescoupon", 223.41, 164.49),
+    ("18.09.2028", "RO28", "Letzter Coupon + Tilgung zu 100 %", 223.41, 164.49),
+]
+
 FREE_SLOTS = 0          # Ghost-Zeilen in der Tabelle fuer kuenftige Positionen
 OUTPUT = "Portfolio_AFB.html"
 
@@ -482,6 +502,26 @@ def build_static_svg(chart):
 
 
 def build_html(summary, rows, chart):
+    # Zins-Historie und -Ausblick rendern
+    hist_rows = ""
+    for datum, sym, beschr, betrag in ZINS_HISTORIE:
+        hist_rows += f"""
+          <tr><td class="num">{datum}</td><td><span class="tick">{sym}</span></td>
+          <td>{beschr}</td><td>{betrag}</td></tr>"""
+
+    ausblick_rows = ""
+    sum_brutto = sum(b for *_, b, _n in ZINS_AUSBLICK)
+    sum_netto = sum(n for *_, n in ZINS_AUSBLICK)
+    for datum, sym, beschr, brutto, netto in ZINS_AUSBLICK:
+        ausblick_rows += f"""
+          <tr><td class="num">{datum}</td><td><span class="tick">{sym}</span></td>
+          <td>{beschr}</td><td class="num">{fmt(brutto)}&thinsp;\u20ac</td>
+          <td class="num up-soft">~{fmt(netto)}&thinsp;\u20ac</td></tr>"""
+    ausblick_rows += f"""
+          <tr class="calc-sum"><td></td><td></td><td>Summe ausstehend</td>
+          <td class="num">{fmt(sum_brutto)}&thinsp;\u20ac</td>
+          <td class="num up-soft">~{fmt(sum_netto)}&thinsp;\u20ac</td></tr>"""
+
     calc_rows = ""
     calc_coupons_total = 0.0
     for r in rows:
@@ -506,6 +546,10 @@ def build_html(summary, rows, chart):
             '<span class="muted-dash">&mdash;</span>'
             if is_eur else f"{fmt(r['value_eur'])}&thinsp;\u20ac"
         )
+        zins_cell = (
+            f"+{fmt(r.get('coupons_eur', 0.0))}&thinsp;\u20ac"
+            if r.get("coupons_eur") else '<span class="muted-dash">&mdash;</span>'
+        )
         pos_rows += f"""
         <tr>
           <td class="pos-name"><span class="tick">{r['ticker']}</span>{r['name']}</td>
@@ -516,6 +560,7 @@ def build_html(summary, rows, chart):
           <td class="num {sign_cls(r['day_pct'])}">{sign_fmt(r['day_pct'], 2, '&thinsp;%')}</td>
           <td class="num">{fmt(r['value_nat'])}&thinsp;{sym}</td>
           <td class="num">{wert_eur_cell}</td>
+          <td class="num up-soft">{zins_cell}</td>
           <td class="num {sign_cls(r['pnl_pct'])}">{sign_fmt(r['pnl_pct'], 1, '&thinsp;%')}</td>
           <td class="num {sign_cls(r['pnl_eur'])}">{sign_fmt(r['pnl_eur'], 2, '&thinsp;€')}</td>
         </tr>"""
@@ -527,6 +572,7 @@ def build_html(summary, rows, chart):
           <td class="num">&middot;</td><td class="num">&middot;</td><td class="num">&middot;</td>
           <td class="num">&middot;</td><td class="num">&middot;</td><td class="num">&middot;</td>
           <td class="num">&middot;</td><td class="num">&middot;</td><td class="num">&middot;</td>
+          <td class="num">&middot;</td>
         </tr>"""
 
     s = summary
@@ -647,6 +693,9 @@ def build_html(summary, rows, chart):
   .calc-table tr.calc-sum td {{ border-top: 1px solid var(--line); border-bottom: none;
                                 color: var(--text); font-weight: 500; }}
   .calc-note {{ margin-top: 10px; max-width: 900px; }}
+  .zins-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }}
+  .up-soft {{ color: #7fb99a; }}
+  @media (max-width: 1100px) {{ .zins-grid {{ grid-template-columns: 1fr; }} }}
 
   @media (max-width: 760px) {{
     .kpis {{ grid-template-columns: repeat(2, 1fr); }}
@@ -716,12 +765,36 @@ def build_html(summary, rows, chart):
         <thead>
           <tr>
             <th>Position</th><th>Menge</th><th>Einstieg &Oslash;</th><th>Einstiegsinvest</th><th>Kurs</th>
-            <th>Tag</th><th>Wert</th><th>Wert &euro;</th><th>G&amp;V %</th><th>G&amp;V &euro;</th>
+            <th>Tag</th><th>Wert</th><th>Wert &euro;</th><th>Zinsen &euro;</th><th>G&amp;V %</th><th>G&amp;V &euro;</th>
           </tr>
         </thead>
         <tbody>{pos_rows}
         </tbody>
       </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>Zinsen</h2></div>
+    <div class="zins-grid">
+      <div class="calc-panel">
+        <div class="calc-title">Bisherige Zahlungsstr&ouml;me</div>
+        <table class="calc-table">
+          <thead><tr><th>Datum</th><th></th><th>Vorgang</th><th>Betrag</th></tr></thead>
+          <tbody>{hist_rows}
+          </tbody>
+        </table>
+      </div>
+      <div class="calc-panel">
+        <div class="calc-title">Ausblick &ndash; kommende Zinszahlungen</div>
+        <table class="calc-table">
+          <thead><tr><th>Datum</th><th></th><th>Vorgang</th><th>Brutto</th><th>Netto (Prognose)</th></tr></thead>
+          <tbody>{ausblick_rows}
+          </tbody>
+        </table>
+        <div class="calc-note">Netto-Prognose bei Abgeltungsteuer + Soli (26,375&thinsp;%),
+        ohne Freistellungsauftrag. VWFS-Schlusszins anteilig 01.01.&ndash;19.08.2027 gerechnet.</div>
+      </div>
     </div>
   </section>
 
