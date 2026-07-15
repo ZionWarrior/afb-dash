@@ -700,7 +700,9 @@ def build_html(summary, rows, chart):
 
   footer {{ margin-top: 40px; color: var(--muted); font-size: 12px; line-height: 1.7; }}
   .calc-panel {{ border: 1px solid var(--line); background: var(--panel); padding: 16px 18px 14px; }}
-  .calc-title {{ color: var(--text); font-size: 13px; margin-bottom: 10px; }}
+  .calc-title {{ color: #b9bbc1; font-size: 13px; text-transform: uppercase;
+                 letter-spacing: .14em; font-weight: 500; margin-bottom: 12px; }}
+  .table-panel .calc-title {{ padding: 14px 16px 0; margin-bottom: 4px; }}
   .calc-table {{ border-collapse: collapse; min-width: 0; width: auto; }}
   .calc-table th {{ padding: 6px 14px; font-size: 10px; background: transparent; }}
   .calc-table td {{ padding: 6px 14px; font-size: 12px; border-bottom: 1px solid #17181b; }}
@@ -773,27 +775,16 @@ def build_html(summary, rows, chart):
   </section>
 
   <section>
-    <div class="sec-head"><h2>Positionen</h2></div>
     <div class="table-panel">
+      <div class="calc-title">Positionen</div>
       <table>
         <thead>
           <tr>
-            <th>Position</th><th>Menge</th><th>Einstieg &Oslash;</th><th>Einstiegsinvest</th><th>Kurs</th>
+            <th>Positionen</th><th>Menge</th><th>Einstieg &Oslash;</th><th>Einstiegsinvest</th><th>Kurs</th>
             <th>Tag</th><th>Wert / &euro;</th><th>Zinsen &euro;</th><th>G&amp;V %</th><th>G&amp;V &euro;</th>
           </tr>
         </thead>
         <tbody>{pos_rows}
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <section>
-    <div class="sec-head"><h2>Zinsen &ndash; bisherige Zahlungsstr&ouml;me</h2></div>
-    <div class="calc-panel">
-      <table class="calc-table">
-        <thead><tr><th>Datum</th><th></th><th>Vorgang</th><th>Betrag</th></tr></thead>
-        <tbody>{hist_rows}
         </tbody>
       </table>
     </div>
@@ -824,6 +815,14 @@ def build_html(summary, rows, chart):
         Zinsen = tats&auml;chlich erhaltene Netto-Coupons (nach Steuer); sie erh&ouml;hen die G&amp;V,
         nicht aber den Positionswert.
       </div>
+    </div>
+    <div class="calc-panel" style="margin-top:16px;">
+      <div class="calc-title">Zinsen &ndash; bisherige Zahlungsstr&ouml;me</div>
+      <table class="calc-table">
+        <thead><tr><th>Datum</th><th></th><th>Vorgang</th><th>Betrag</th></tr></thead>
+        <tbody>{hist_rows}
+        </tbody>
+      </table>
     </div>
     <div class="calc-panel" style="margin-top:16px;">
       <div class="calc-title">Ausblick &ndash; kommende Zinszahlungen</div>
@@ -862,9 +861,10 @@ const datasets = [{{
   borderCapStyle: "round",
   borderJoinStyle: "round",
   pointRadius: 0,
-  pointHoverRadius: 5,
-  pointHoverBackgroundColor: "#000",
-  pointHoverBorderWidth: 2,
+  pointHoverRadius: 7,
+  pointHoverBackgroundColor: COLORS["Portfolio"],
+  pointHoverBorderColor: "#ffffff",
+  pointHoverBorderWidth: 2.5,
   tension: 0.25,
   hidden: false
 }}];
@@ -877,8 +877,9 @@ for (const [name, series] of Object.entries(DATA.benchmarks)) {{
     unit: DATA.benchmark_units[name],
     borderColor: COLORS[name] || "#888",
     borderWidth: 1.8, borderCapStyle: "round", borderJoinStyle: "round",
-    pointRadius: 0, pointHoverRadius: 4, pointHoverBackgroundColor: "#000",
-    pointHoverBorderWidth: 2, tension: 0.25,
+    pointRadius: 0, pointHoverRadius: 6,
+    pointHoverBackgroundColor: COLORS[name] || "#888",
+    pointHoverBorderColor: "#ffffff", pointHoverBorderWidth: 2, tension: 0.25,
     hidden: true
   }});
 }}
@@ -910,7 +911,14 @@ function externalTooltip(context) {{
     return;
   }}
 
-  const dateStr = tt.dataPoints && tt.dataPoints[0] ? tt.dataPoints[0].label : "";
+  const MONATE = ["Januar","Februar","M\u00e4rz","April","Mai","Juni",
+                  "Juli","August","September","Oktober","November","Dezember"];
+  const raw = tt.dataPoints && tt.dataPoints[0] ? tt.dataPoints[0].label : "";
+  let dateStr = raw;
+  const parts = raw.split("-");
+  if (parts.length === 3) {{
+    dateStr = `${{parseInt(parts[2], 10)}}. ${{MONATE[+parts[1] - 1]}} ${{parts[0]}}`;
+  }}
   let html = `<div class="tt-title">${{dateStr}}</div>`;
 
   tt.dataPoints.forEach(dp => {{
@@ -1018,6 +1026,25 @@ const athPlugin = {{
   }}
 }};
 
+const crosshairPlugin = {{
+  id: "crosshair",
+  afterDatasetsDraw(chart) {{
+    const act = chart.getActiveElements();
+    if (!act.length) return;
+    const {{ ctx, chartArea }} = chart;
+    const x = act[0].element.x;
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.28)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(x, chartArea.top);
+    ctx.lineTo(x, chartArea.bottom);
+    ctx.stroke();
+    ctx.restore();
+  }}
+}};
+
 const interestPlugin = {{
   id: "interestMarkers",
   afterDatasetsDraw(chart) {{
@@ -1092,7 +1119,7 @@ const eventMarkerPlugin = {{
 const chart = new Chart(ctx, {{
   type: "line",
   data: {{ labels: DATA.dates, datasets }},
-  plugins: [eventMarkerPlugin, athPlugin, interestPlugin],
+  plugins: [eventMarkerPlugin, athPlugin, interestPlugin, crosshairPlugin],
   options: {{
     responsive: true, maintainAspectRatio: false,
     layout: {{ padding: {{ left: 10, top: 14, right: 12 }} }},
@@ -1191,6 +1218,17 @@ Object.keys(DATA.positions).forEach(name => {{
     chart.update();
   }});
   posChipBox.appendChild(b);
+}});
+
+// Tooltip schliessen, wenn ausserhalb des Charts getippt/geklickt wird (v.a. mobil)
+["touchstart", "click"].forEach(evt => {{
+  document.addEventListener(evt, e => {{
+    if (!chartBoxEl.contains(e.target)) {{
+      tooltipEl.style.opacity = 0;
+      chart.setActiveElements([]);
+      chart.update("none");
+    }}
+  }}, {{ passive: true }});
 }});
 
 // JS lief erfolgreich durch -> interaktiven Chart zeigen, statisches SVG ausblenden
