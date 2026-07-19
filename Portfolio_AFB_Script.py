@@ -692,6 +692,7 @@ def build_html(summary, rows, chart):
         text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }}
 
   .chips {{ display: flex; gap: 8px; flex-wrap: wrap; }}
+  #chips {{ flex: 1 1 auto; align-items: center; }}
   .chip {{
     font-family: "IBM Plex Mono", monospace; font-size: 12px;
     padding: 6px 14px; border: 1px solid var(--line); border-radius: 999px;
@@ -755,7 +756,7 @@ def build_html(summary, rows, chart):
                                 color: var(--text); font-weight: 500; }}
   .calc-note {{ margin-top: 10px; max-width: 900px; }}
   .up-soft {{ color: #7fb99a; }}
-  .chips-gap {{ margin-left: 18px; align-self: center; }}
+  .chips-gap {{ margin-left: auto; padding-left: 40px; align-self: center; }}
 
   @media (max-width: 760px) {{
     .kpis {{ grid-template-columns: repeat(2, 1fr); }}
