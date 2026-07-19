@@ -265,6 +265,9 @@ def build_data():
     lumpsum_eur = pd.Series(0.0, index=dates)
     position_series = {}  # Name -> Lump-Sum-Serie (EUR) je Einzelposition
     position_series_nc = {}  # dito, aber OHNE eingerechnete Zinsen (fuer ATH)
+    position_series_actual = {}  # tatsaechlicher gestaffelter Verlauf je Position
+    position_series_actual_nc = {}  # dito ohne Zinsen (fuer ATH)
+    position_flows = {}  # Kapitalzufluesse (Kaeufe) je Position in EUR
     coupons_eur_total = 0.0  # erhaltene Netto-Zinsen (fliessen in die G&V)
     rows = []
 
@@ -309,6 +312,27 @@ def build_data():
         position_series[p["name"]] = pos_lumpsum.round(2)
         position_series_nc[p["name"]] = pos_lumpsum_nc.round(2)
 
+        # Tatsaechlicher Verlauf: Bestand erst ab Kaufdatum bewertet
+        pos_actual = (qty * px.loc[dates] * fx_ser.loc[dates]).fillna(0.0)
+        pos_actual_nc = pos_actual.copy()
+        for d, a in p.get("coupons_received", []):
+            td = pd.Timestamp(d)
+            fx_at = fx_ser.asof(td) if hasattr(fx, "index") else fx
+            pos_actual.loc[pos_actual.index >= td] += a * fx_at
+        position_series_actual[p["name"]] = pos_actual.round(2)
+        position_series_actual_nc[p["name"]] = pos_actual_nc.round(2)
+        position_flows[p["name"]] = [
+            {
+                "d": t[0],
+                "a": round(
+                    (t[1] * t[2] + t[3])
+                    * (fx_ser.asof(pd.Timestamp(t[0])) if hasattr(fx, "index") else fx),
+                    2,
+                ),
+            }
+            for t in p["trades"]
+        ]
+
         # --- Kennzahlen (letzter Stand) ---
         q_now = qty.iloc[-1]
         last = float(px.dropna().iloc[-1])
@@ -336,6 +360,7 @@ def build_data():
             "cost_eur": cost_eur,
             "coupons_eur": coupons_eur,
             "is_manual": p["ticker"] == "MANUAL",
+            "trade_dates": [t[0] for t in p["trades"]],
             "nominal": p.get("nominal"),
             "price_pct": p.get("manual_price_pct"),
             "entry_pct": p.get("purchase_price_pct"),
@@ -401,6 +426,20 @@ def build_data():
         "positions_nc": {
             name: [None if pd.isna(v) else float(v) for v in s]
             for name, s in position_series_nc.items()
+        },
+        "positions_actual": {
+            name: [None if pd.isna(v) else float(v) for v in s]
+            for name, s in position_series_actual.items()
+        },
+        "positions_actual_nc": {
+            name: [None if pd.isna(v) else float(v) for v in s]
+            for name, s in position_series_actual_nc.items()
+        },
+        "flows": position_flows,
+        "symbols": {
+            p["name"]: p.get("symbol")
+            or {"GOLD_EUR": "GOLD"}.get(p["ticker"], p["ticker"].replace("-USD", ""))
+            for p in POSITIONS
         },
         "interest_events": interest_events,
         "manual_positions": [p["name"] for p in POSITIONS if p["ticker"] == "MANUAL"],
@@ -534,9 +573,13 @@ def build_html(summary, rows, chart):
         cp = r.get("coupons_eur", 0.0)
         calc_coupons_total += cp
         cp_cell = f"+&thinsp;{fmt(cp)}" if cp else '<span class="muted-dash">&mdash;</span>'
+        datum_cell = " / ".join(
+            f"{d[8:10]}.{d[5:7]}.{d[0:4]}" for d in r.get("trade_dates", [])
+        )
         calc_rows += f"""
           <tr>
             <td>{r['name']}</td>
+            <td class="num">{datum_cell}</td>
             <td class="num">{fmt(r['value_eur'])}</td>
             <td class="num">&minus;&thinsp;{fmt(r['cost_eur'])}</td>
             <td class="num">{cp_cell}</td>
@@ -712,6 +755,7 @@ def build_html(summary, rows, chart):
                                 color: var(--text); font-weight: 500; }}
   .calc-note {{ margin-top: 10px; max-width: 900px; }}
   .up-soft {{ color: #7fb99a; }}
+  .chips-gap {{ margin-left: 18px; align-self: center; }}
 
   @media (max-width: 760px) {{
     .kpis {{ grid-template-columns: repeat(2, 1fr); }}
@@ -770,7 +814,7 @@ def build_html(summary, rows, chart):
         <div id="staticChart">{build_static_svg(chart)}</div>
         <div id="chartTooltip"></div>
       </div>
-      <div class="chart-note">Portfolio &amp; Benchmarks: alle aktuellen Positionen bzw. die investierte Summe ({fmt(chart['invested_eur'], 0)}&thinsp;&euro;) so bewertet, als w&auml;ren sie komplett am Starttag gekauft worden &ndash; glatte Vergleichskurve ohne Spr&uuml;nge durch sp&auml;tere Kapitalzufl&uuml;sse. Echte Kaufzeitpunkte, -betr&auml;ge und G&amp;V siehe Tabelle. Tooltip zeigt die echten Indexst&auml;nde/Kurse zum jeweiligen Zeitpunkt. Einzelne Positionen lassen sich unten aus der Portfolio-Linie herausnehmen.</div>
+      <div class="chart-note"><b>Ansichten:</b> <b>Lump-Sum</b> = alles wie am Starttag gekauft (glatt, Benchmarks auf die Gesamtsumme von {fmt(chart['invested_eur'], 0)}&thinsp;&euro; skaliert). <b>Gestaffelt</b> = tats&auml;chlicher Depotwert, K&auml;ufe erscheinen als Spr&uuml;nge; Benchmarks investieren dieselben Betr&auml;ge zu denselben Zeitpunkten. <b>TWR</b> = zeitgewichtete Rendite, Kapitalzufl&uuml;sse herausgerechnet, auf Euro skaliert. <b>Hybrid</b> = wie Gestaffelt, zus&auml;tzlich sind die Kaufzeitpunkte mit Betrag markiert. Tooltip zeigt die echten Indexst&auml;nde/Kurse. Einzelne Positionen lassen sich oben aus der Kurve herausnehmen.</div>
     </div>
   </section>
 
@@ -795,11 +839,12 @@ def build_html(summary, rows, chart):
       <div class="calc-title">So errechnet sich die Gesamt-G&amp;V von {sign_fmt(s['pnl_eur'], 2, '&thinsp;€')}</div>
       <table class="calc-table">
         <thead>
-          <tr><th>Position</th><th>Wert heute &euro;</th><th>&minus; Kostenbasis &euro;</th><th>+ Zinsen netto &euro;</th><th>= G&amp;V &euro;</th></tr>
+          <tr><th>Position</th><th>Kaufdatum</th><th>Wert heute &euro;</th><th>&minus; Kostenbasis &euro;</th><th>+ Zinsen netto &euro;</th><th>= G&amp;V &euro;</th></tr>
         </thead>
         <tbody>{calc_rows}
           <tr class="calc-sum">
             <td>Summe</td>
+            <td></td>
             <td class="num">{fmt(s['total_eur'])}</td>
             <td class="num">&minus;&thinsp;{fmt(s['invested_eur'])}</td>
             <td class="num">+&thinsp;{fmt(calc_coupons_total)}</td>
@@ -887,15 +932,87 @@ for (const [name, series] of Object.entries(DATA.benchmarks)) {{
 // Welche Einzelpositionen aktuell in der Portfolio-Linie mitgerechnet werden
 const activePositions = new Set(Object.keys(DATA.positions));
 
-function recomputePortfolioLine() {{
-  // Zins-Stufen (Coupons) stecken IMMER in der Kurve -
-  // nur die Beschriftung/Marker erscheint erst in der Einzelansicht.
+let viewMode = "lump";  // lump | actual | twr | hybrid
+
+function rawAt(arr, i) {{
+  for (let k = i; k >= 0; k--) if (arr[k] != null) return arr[k];
+  return null;
+}}
+
+function activeFlows() {{
+  const fl = [];
+  activePositions.forEach(name => (DATA.flows[name] || []).forEach(f => fl.push(f)));
+  fl.sort((a, b) => (a.d < b.d ? -1 : 1));
+  return fl;
+}}
+
+function twrSeries() {{
+  // Zeitgewichtete Rendite: Kapitalzufluesse herausgerechnet,
+  // Ergebnis auf die investierte Summe in EUR skaliert.
   const n = DATA.dates.length;
-  const sum = new Array(n).fill(0);
+  const V = new Array(n).fill(0);
   activePositions.forEach(name => {{
-    const s = DATA.positions[name];
-    for (let i = 0; i < n; i++) sum[i] += (s[i] ?? 0);
+    const s = DATA.positions_actual[name];
+    for (let i = 0; i < n; i++) V[i] += (s[i] ?? 0);
   }});
+  const F = {{}};
+  let invested = 0;
+  activeFlows().forEach(f => {{ F[f.d] = (F[f.d] || 0) + f.a; invested += f.a; }});
+  const out = new Array(n).fill(null);
+  let idx = 100;
+  out[0] = invested;
+  for (let i = 1; i < n; i++) {{
+    const f = F[DATA.dates[i]] || 0;
+    if (V[i - 1] > 0) idx = idx * (V[i] - f) / V[i - 1];
+    out[i] = idx / 100 * invested;
+  }}
+  return out;
+}}
+
+function staggeredBenchmark(rawArr) {{
+  // "Was waere, haette man jeden Kaufbetrag am Kauftag in den Index gesteckt"
+  const n = DATA.dates.length;
+  const out = new Array(n).fill(null);
+  const fl = activeFlows();
+  let units = 0, fi = 0, started = false;
+  for (let i = 0; i < n; i++) {{
+    while (fi < fl.length && fl[fi].d <= DATA.dates[i]) {{
+      const pr = rawAt(rawArr, i);
+      if (pr) units += fl[fi].a / pr;
+      fi++; started = true;
+    }}
+    if (started) {{
+      const pr = rawArr[i];
+      out[i] = pr != null ? units * pr : (i > 0 ? out[i - 1] : null);
+    }}
+  }}
+  return out;
+}}
+
+function updateBenchmarks() {{
+  chart.data.datasets.forEach(ds => {{
+    if (ds.label === "Portfolio") return;
+    if (viewMode === "actual" || viewMode === "hybrid") {{
+      ds.data = staggeredBenchmark(DATA.benchmarks_raw[ds.label]);
+    }} else {{
+      ds.data = DATA.benchmarks[ds.label];
+    }}
+  }});
+}}
+
+function recomputePortfolioLine() {{
+  const n = DATA.dates.length;
+  let sum;
+  if (viewMode === "twr") {{
+    sum = twrSeries();
+  }} else {{
+    const srcMap = viewMode === "lump" ? DATA.positions : DATA.positions_actual;
+    sum = new Array(n).fill(0);
+    activePositions.forEach(name => {{
+      const s = srcMap[name];
+      for (let i = 0; i < n; i++) sum[i] += (s[i] ?? 0);
+    }});
+  }}
   const portfolioDs = chart.data.datasets[0];
   portfolioDs.data = sum;
   portfolioDs.raw = sum;
@@ -984,11 +1101,13 @@ function portfolioAthIndex() {{
   // (Anleihe/Sparbrief) angezeigt werden - dort ist ein ATH sinnlos.
   const activeArr = Array.from(activePositions);
   if (activeArr.every(n => (DATA.manual_positions || []).includes(n))) return [];
+  if (viewMode === "twr") return athIndices(chart.data.datasets[0].data);
   // ATH auf Basis der Kurve OHNE Zins-Stufen (Zins-Zahlungen erzeugen kein ATH)
+  const srcMap = viewMode === "lump" ? DATA.positions_nc : DATA.positions_actual_nc;
   const n = DATA.dates.length;
   const sum = new Array(n).fill(0);
   activePositions.forEach(name => {{
-    const s = DATA.positions_nc[name] || DATA.positions[name];
+    const s = srcMap[name] || DATA.positions[name];
     for (let i = 0; i < n; i++) sum[i] += (s[i] ?? 0);
   }});
   return athIndices(sum);
@@ -1020,6 +1139,46 @@ const athPlugin = {{
         ctx.strokeStyle = "#000";
         ctx.strokeText("ATH", x, y - 10);
         ctx.fillText("ATH", x, y - 10);
+        ctx.restore();
+      }});
+    }});
+  }}
+}};
+
+const purchasePlugin = {{
+  id: "purchaseMarkers",
+  afterDatasetsDraw(chart) {{
+    if (viewMode !== "hybrid") return;
+    const {{ ctx, scales, chartArea }} = chart;
+    if (!chartArea) return;
+    const ds = chart.data.datasets[0];
+    if (ds.hidden) return;
+    activePositions.forEach(name => {{
+      (DATA.flows[name] || []).forEach(f => {{
+        const idx = DATA.dates.indexOf(f.d);
+        if (idx === -1) return;
+        const v = ds.data[idx];
+        if (v === null || v === undefined) return;
+        const x = scales.x.getPixelForValue(idx);
+        const y = scales.y.getPixelForValue(v);
+        if (x < chartArea.left || x > chartArea.right) return;
+        const label = "+" + f.a.toLocaleString("de-DE", {{ maximumFractionDigits: 0 }})
+          + "\u2009\u20ac " + (DATA.symbols[name] || "");
+        ctx.save();
+        ctx.fillStyle = "#cfd2d6";
+        ctx.beginPath();
+        ctx.moveTo(x, y - 5);
+        ctx.lineTo(x - 4, y + 3);
+        ctx.lineTo(x + 4, y + 3);
+        ctx.closePath();
+        ctx.fill();
+        ctx.font = "10px 'IBM Plex Mono', monospace";
+        ctx.textAlign = "center";
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#000";
+        ctx.strokeText(label, x, y - 12);
+        ctx.fillStyle = "#cfd2d6";
+        ctx.fillText(label, x, y - 12);
         ctx.restore();
       }});
     }});
@@ -1119,7 +1278,7 @@ const eventMarkerPlugin = {{
 const chart = new Chart(ctx, {{
   type: "line",
   data: {{ labels: DATA.dates, datasets }},
-  plugins: [eventMarkerPlugin, athPlugin, interestPlugin, crosshairPlugin],
+  plugins: [eventMarkerPlugin, athPlugin, interestPlugin, crosshairPlugin, purchasePlugin],
   options: {{
     responsive: true, maintainAspectRatio: false,
     layout: {{ padding: {{ left: 10, top: 14, right: 12 }} }},
@@ -1196,6 +1355,39 @@ eventsChip.addEventListener("click", () => {{
   chart.update();
 }});
 chipBox.appendChild(eventsChip);
+
+// Ansicht-Umschalter (vier Berechnungsvarianten der Portfolio-Kurve)
+const viewLabel = document.createElement("span");
+viewLabel.className = "chips-label chips-gap";
+viewLabel.textContent = "Ansicht";
+chipBox.appendChild(viewLabel);
+const VIEWS = [
+  ["lump", "Lump-Sum"],
+  ["actual", "Gestaffelt"],
+  ["twr", "TWR"],
+  ["hybrid", "Hybrid"]
+];
+const viewChips = {{}};
+VIEWS.forEach(([key, label]) => {{
+  const b = document.createElement("button");
+  b.className = "chip" + (key === "lump" ? " on" : "");
+  b.style.setProperty("--chipc", "#b9bbc1");
+  b.textContent = label;
+  b.addEventListener("click", () => {{
+    if (viewMode === key) return;
+    viewMode = key;
+    Object.values(viewChips).forEach(c => c.classList.remove("on"));
+    b.classList.add("on");
+    recomputePortfolioLine();
+    updateBenchmarks();
+    const r = yRange();
+    chart.options.scales.y.min = r.min;
+    chart.options.scales.y.max = r.max;
+    chart.update();
+  }});
+  viewChips[key] = b;
+  chipBox.appendChild(b);
+}});
 // Positions-Chips: Einzelpositionen aus der Portfolio-Linie heraus-/hineinnehmen
 const posChipBox = document.getElementById("posChips");
 Object.keys(DATA.positions).forEach(name => {{
@@ -1212,6 +1404,7 @@ Object.keys(DATA.positions).forEach(name => {{
       b.classList.add("on"); b.classList.remove("off");
     }}
     recomputePortfolioLine();
+    updateBenchmarks();
     const r = yRange();
     chart.options.scales.y.min = r.min;
     chart.options.scales.y.max = r.max;
